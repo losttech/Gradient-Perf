@@ -1,4 +1,4 @@
-/*****************************************************************************
+﻿/*****************************************************************************
    Copyright 2018 The TensorFlow.NET Authors. All Rights Reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,7 +75,8 @@ namespace TensorFlowNET.Examples
         float accuracy_test = 0f;
         float loss_test = 1f;
 
-        ndarray<float> x_train; ndarray<int> y_train;
+        ndarray<float> x_train;
+        ndarray<float> y_train;
         ndarray x_valid, y_valid;
         ndarray x_test, y_test;
         static PyObject numPy;
@@ -99,7 +100,8 @@ namespace TensorFlowNET.Examples
 
         public Graph BuildGraph()
         {
-            var graph = (Graph)new Graph().as_default();
+            var graph = new Graph();
+            graph.as_default_dyn().__enter__();
 
             using (new name_scope("Input").StartUsing())
             {
@@ -130,7 +132,7 @@ namespace TensorFlowNET.Examples
 
                 using (new variable_scope("Accuracy").StartUsing())
                 {
-                    var correct_prediction = tf.equal(tf.argmax(output_logits, 1), tf.argmax(y, 1), name: "correct_pred");
+                    var correct_prediction = tf.equal_dyn(tf.argmax(output_logits, 1), tf.argmax(y, 1), name: "correct_pred");
                     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32), name: "accuracy");
                 }
 
@@ -145,12 +147,12 @@ namespace TensorFlowNET.Examples
 
         public void Train()
         {
-            var graph = BuildGraph();
+            Graph graph = BuildGraph();
             var sess = new Session(graph: graph);
             using (sess.StartUsing())
             {
                 // Number of training iterations in each epoch
-                int num_tr_iter = y_train.shape[0] / batch_size;
+                int num_tr_iter = y_train.shape.Item1 / batch_size;
 
                 var init = tf.global_variables_initializer();
                 sess.run(init);
@@ -180,22 +182,24 @@ namespace TensorFlowNET.Examples
                         if (iteration % display_freq == 0)
                         {
                             // Calculate and display the batch loss and accuracy
-                            (float, float) stats = sess.run(new []{ loss, accuracy }, new Dictionary<object,object>{
+                            IList<float32> stats = sess.run(new []{ loss, accuracy }, new Dictionary<object,object>{
                                 [x] = x_batch,
                                 [y] = y_batch,
                             });
-                            (loss_val, accuracy_val) = stats;
+                            loss_val = stats[0];
+                            accuracy_val = stats[1];
                             Console.WriteLine($"iter {iteration.ToString("000")}: Loss={loss_val.ToString("0.0000")}, Training Accuracy={accuracy_val.ToString("P")} {sw.ElapsedMilliseconds}ms");
                             sw.Restart();
                         }
                     }
 
                     // Run validation after every epoch
-                    (float, float) validationStats = sess.run(new []{loss, accuracy}, feed_dict: new Dictionary<object,object> {
+                    IList<float32> validationStats = sess.run(new []{loss, accuracy}, feed_dict: new Dictionary<object,object> {
                         [x] = this.x_valid,
                         [y] = this.y_valid,
                     });
-                    (loss_val, accuracy_val) = validationStats;
+                    loss_val = validationStats[0];
+                    accuracy_val = validationStats[1];
                     Console.WriteLine("---------------------------------------------------------");
                     Console.WriteLine($"Epoch: {epoch + 1}, validation loss: {loss_val.ToString("0.0000")}, validation accuracy: {accuracy_val.ToString("P")}");
                     Console.WriteLine("---------------------------------------------------------");
@@ -207,7 +211,8 @@ namespace TensorFlowNET.Examples
 
         public void Test()
         {
-            Graph graph = new Graph().as_default_dyn();
+            var graph = new Graph();
+            graph.as_default_dyn().__enter__();
             var sess = new Session(graph: graph);
             using (sess.StartUsing())
             {
@@ -223,11 +228,12 @@ namespace TensorFlowNET.Examples
                 //var init = tf.global_variables_initializer();
                 //sess.run(init);
 
-                (float, float) stats = sess.run(new []{loss, accuracy}, feed_dict: new Dictionary<object,object> {
+                IList<float32> stats = sess.run(new []{loss, accuracy}, feed_dict: new Dictionary<object,object> {
                     [x] = this.x_test,
                     [y] = this.y_test,
                 });
-                (loss_test, accuracy_test) = stats;
+                loss_test = stats[0];
+                accuracy_test = stats[1];
                 Console.WriteLine("---------------------------------------------------------");
                 Console.WriteLine($"Test loss: {loss_test.ToString("0.0000")}, test accuracy: {accuracy_test.ToString("P")}");
                 Console.WriteLine("---------------------------------------------------------");
@@ -247,8 +253,9 @@ namespace TensorFlowNET.Examples
         {
             using(new variable_scope(name).StartUsing())
             {
-                var num_in_channel = x.shape[x.shape.ndim - 1];
-                var shape = new TensorShape(filter_size, filter_size, num_in_channel, num_filters);
+                TensorShape inputShape = x.shape;
+                Dimension num_in_channel = inputShape.dims[x.shape.ndims - 1];
+                var shape = new TensorShape(filter_size, filter_size, num_in_channel.value, num_filters);
                 var W = weight_variable("W", shape);
                 // var tf.summary.histogram("weight", W);
                 var b = bias_variable("b", new[] { num_filters });
@@ -287,9 +294,9 @@ namespace TensorFlowNET.Examples
         {
             using (new variable_scope("Flatten_layer").StartUsing())
             {
-                var layer_shape = layer.shape;
-                var num_features = layer_shape[new Slice(1, 4)].size;
-                var layer_flat = tf.reshape(layer, new TensorShape(null, num_features));
+                TensorShape layer_shape = layer.shape;
+                var num_features = layer_shape.dims.Skip(1).Aggregate(1, (s, dim) => s * (int)dim.value);
+                var layer_flat = tf.reshape(layer, shape: new []{-1, num_features});
 
                 return layer_flat;
             }
@@ -336,7 +343,7 @@ namespace TensorFlowNET.Examples
         {
             using (new variable_scope(name).StartUsing())
             {
-                var in_dim = x.shape[1];
+                int? in_dim = x.shape[1].value;
 
                 var W = weight_variable("W_" + name, new TensorShape(in_dim, num_units));
                 var b = bias_variable("b_" + name, new[] { num_units });
