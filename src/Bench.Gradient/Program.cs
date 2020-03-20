@@ -1,12 +1,16 @@
 ﻿using System;
+using Gradient;
+using TensorFlowNET.Examples;
 
-namespace Bench.Gradient
+namespace Bench
 {
     class Program
     {
         static void Main(string[] args)
         {
-            Console.WriteLine("Hello World!");
+            GradientSetup.EnsureInitialized();
+            var sample = new DigitRecognitionCNN();
+            sample.Run();
         }
     }
 }

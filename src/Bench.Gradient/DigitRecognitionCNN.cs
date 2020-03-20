@@ -14,25 +14,33 @@
    limitations under the License.
 ******************************************************************************/
 
-using Google.Protobuf;
-using NumSharp;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using Tensorflow;
-using Tensorflow.Hub;
-using static Tensorflow.Binding;
+using Gradient;
+using numpy;
+using tensorflow;
+using tensorflow.python.ops.variables;
+using tensorflow.train;
+using static System.Linq.Enumerable;
 
 namespace TensorFlowNET.Examples
 {
+    using NumSharp;
+    using Python.Runtime;
+    using Tensorflow.Hub;
+    using np = numpy.np;
+
     /// <summary>
     /// Convolutional Neural Network classifier for Hand Written Digits
     /// CNN architecture with two convolutional layers, followed by two fully-connected layers at the end.
     /// Use Stochastic Gradient Descent (SGD) optimizer. 
     /// https://www.easy-tensorflow.com/tf-tutorials/convolutional-neural-nets-cnns/cnn1
     /// </summary>
-    public class DigitRecognitionCNN : SciSharpExample, IExample
+    public class DigitRecognitionCNN
     {
+        const string Name = nameof(DigitRecognitionCNN);
         string logs_path = "logs";
 
         const int img_h = 28, img_w = 28; // MNIST images are 28x28
@@ -67,39 +75,38 @@ namespace TensorFlowNET.Examples
         float accuracy_test = 0f;
         float loss_test = 1f;
 
-        NDArray x_train, y_train;
-        NDArray x_valid, y_valid;
-        NDArray x_test, y_test;
+        ndarray<float> x_train; ndarray<int> y_train;
+        ndarray x_valid, y_valid;
+        ndarray x_test, y_test;
+        static PyObject numPy;
 
-        public ExampleConfig InitConfig()
-            => Config = new ExampleConfig
-            {
-                Name = "MNIST CNN",
-                Enabled = true,
-                IsImportingGraph = false,
-                Priority = 10
-            };
+        public DigitRecognitionCNN()
+        {
+            using var _ = Py.GIL();
+            if (numPy is null)
+                numPy = PythonEngine.ImportModule("numpy");
+        }
 
         public bool Run()
         {
             PrepareData();
 
             Train();
-            Test();
+            // Test();
             
             return accuracy_test > 0.98;
         }
 
-        public override Graph BuildGraph()
+        public Graph BuildGraph()
         {
-            var graph = new Graph().as_default();
+            var graph = (Graph)new Graph().as_default();
 
-            tf_with(tf.name_scope("Input"), delegate
+            using (new name_scope("Input").StartUsing())
             {
                 // Placeholders for inputs (x) and outputs(y)
-                x = tf.placeholder(tf.float32, shape: (-1, img_h, img_w, n_channels), name: "X");
-                y = tf.placeholder(tf.float32, shape: (-1, n_classes), name: "Y");
-            });
+                x = tf.placeholder(tf.float32, new TensorShape(null, img_h, img_w, n_channels), name: "X");
+                y = tf.placeholder(tf.float32, new TensorShape(null, n_classes), name: "Y");
+            }
 
             var conv1 = conv_layer(x, filter_size1, num_filters1, stride1, name: "conv1");
             var pool1 = max_pool(conv1, ksize: 2, stride: 2, name: "pool1");
@@ -109,41 +116,41 @@ namespace TensorFlowNET.Examples
             var fc1 = fc_layer(layer_flat, h1, "FC1", use_relu: true);
             var output_logits = fc_layer(fc1, n_classes, "OUT", use_relu: false);
 
-            tf_with(tf.variable_scope("Train"), delegate
+            using (new variable_scope("Train").StartUsing())
             {
-                tf_with(tf.variable_scope("Loss"), delegate
+                using (new variable_scope("Loss").StartUsing())
                 {
                     loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels: y, logits: output_logits), name: "loss");
-                });
+                }
 
-                tf_with(tf.variable_scope("Optimizer"), delegate
+                using (new variable_scope("Optimizer").StartUsing())
                 {
-                    optimizer = tf.train.AdamOptimizer(learning_rate: learning_rate, name: "Adam-op").minimize(loss);
-                });
+                    optimizer = new AdamOptimizer(learning_rate: learning_rate, name: "Adam-op").minimize(loss);
+                }
 
-                tf_with(tf.variable_scope("Accuracy"), delegate
+                using (new variable_scope("Accuracy").StartUsing())
                 {
                     var correct_prediction = tf.equal(tf.argmax(output_logits, 1), tf.argmax(y, 1), name: "correct_pred");
                     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32), name: "accuracy");
-                });
+                }
 
-                tf_with(tf.variable_scope("Prediction"), delegate
+                using (new variable_scope("Prediction").StartUsing())
                 {
                     cls_prediction = tf.argmax(output_logits, axis: 1, name: "predictions");
-                });
-            });
+                }
+            }
 
             return graph;
         }
 
-        public override void Train()
+        public void Train()
         {
             var graph = BuildGraph();
-            using (var sess = tf.Session(graph))
+            var sess = new Session(graph: graph);
+            using (sess.StartUsing())
             {
-
                 // Number of training iterations in each epoch
-                var num_tr_iter = y_train.shape[0] / batch_size;
+                int num_tr_iter = y_train.shape[0] / batch_size;
 
                 var init = tf.global_variables_initializer();
                 sess.run(init);
@@ -153,69 +160,77 @@ namespace TensorFlowNET.Examples
 
                 var sw = new Stopwatch();
                 sw.Start();
-                foreach (var epoch in range(epochs))
+                foreach (var epoch in Range(0, epochs))
                 {
-                    print($"Training epoch: {epoch + 1}");
-                    // Randomly shuffle the training data at the beginning of each epoch 
-                    (x_train, y_train) = mnist.Randomize(x_train, y_train);
+                    Console.WriteLine($"Training epoch: {epoch + 1}");
+                    Shuffle(x_train, y_train);
 
-                    foreach (var iteration in range(num_tr_iter))
+                    foreach (var iteration in Range(0, num_tr_iter))
                     {
                         var start = iteration * batch_size;
                         var end = (iteration + 1) * batch_size;
-                        var (x_batch, y_batch) = mnist.GetNextBatch(x_train, y_train, start, end);
+                        var (x_batch, y_batch) = GetNextBatch(x_train, y_train, start, end);
 
                         // Run optimization op (backprop)
-                        sess.run(optimizer, (x, x_batch), (y, y_batch));
+                        sess.run(optimizer, feed_dict: new Dictionary<object,object> {
+                            [x] = x_batch,
+                            [y] = y_batch,
+                        });
 
                         if (iteration % display_freq == 0)
                         {
                             // Calculate and display the batch loss and accuracy
-                            (loss_val, accuracy_val) = sess.run((loss, accuracy), new FeedItem(x, x_batch), new FeedItem(y, y_batch));
-                            print($"iter {iteration.ToString("000")}: Loss={loss_val.ToString("0.0000")}, Training Accuracy={accuracy_val.ToString("P")} {sw.ElapsedMilliseconds}ms");
+                            (float, float) stats = sess.run(new []{ loss, accuracy }, new Dictionary<object,object>{
+                                [x] = x_batch,
+                                [y] = y_batch,
+                            });
+                            (loss_val, accuracy_val) = stats;
+                            Console.WriteLine($"iter {iteration.ToString("000")}: Loss={loss_val.ToString("0.0000")}, Training Accuracy={accuracy_val.ToString("P")} {sw.ElapsedMilliseconds}ms");
                             sw.Restart();
                         }
                     }
 
                     // Run validation after every epoch
-                    (loss_val, accuracy_val) = sess.run((loss, accuracy), (x, x_valid), (y, y_valid));
-                    print("---------------------------------------------------------");
-                    print($"Epoch: {epoch + 1}, validation loss: {loss_val.ToString("0.0000")}, validation accuracy: {accuracy_val.ToString("P")}");
-                    print("---------------------------------------------------------");
+                    (float, float) validationStats = sess.run(new []{loss, accuracy}, feed_dict: new Dictionary<object,object> {
+                        [x] = this.x_valid,
+                        [y] = this.y_valid,
+                    });
+                    (loss_val, accuracy_val) = validationStats;
+                    Console.WriteLine("---------------------------------------------------------");
+                    Console.WriteLine($"Epoch: {epoch + 1}, validation loss: {loss_val.ToString("0.0000")}, validation accuracy: {accuracy_val.ToString("P")}");
+                    Console.WriteLine("---------------------------------------------------------");
                 }
 
                 SaveCheckpoint(sess);
             }
         }
 
-        public override string FreezeModel()
+        public void Test()
         {
-            return tf.train.freeze_graph(Config.Name,
-                "model",
-                new[] { "Train/Loss/loss,Train/Accuracy/accuracy" });
-        }
-
-        public override void Test()
-        {
-            using(var graph = tf.Graph().as_default())
-            using(var sess = tf.Session(graph))
+            Graph graph = new Graph().as_default_dyn();
+            var sess = new Session(graph: graph);
+            using (sess.StartUsing())
             {
-                var saver = tf.train.import_meta_graph(Path.Combine(Config.Name, "mnist_cnn.ckpt.meta"));
+                var saver = tf.train.import_meta_graph(Path.Combine(Name, "mnist_cnn.ckpt.meta"));
                 // Restore variables from checkpoint
-                saver.restore(sess, tf.train.latest_checkpoint(Config.Name));
+                saver.restore(sess, tf.train.latest_checkpoint(Name));
 
-                loss = graph.get_tensor_by_name("Train/Loss/loss:0");
-                accuracy = graph.get_tensor_by_name("Train/Accuracy/accuracy:0");
-                x = graph.get_tensor_by_name("Input/X:0");
-                y = graph.get_tensor_by_name("Input/Y:0");
+                loss = graph.get_tensor_by_name_dyn("Train/Loss/loss:0");
+                accuracy = graph.get_tensor_by_name_dyn("Train/Accuracy/accuracy:0");
+                x = graph.get_tensor_by_name_dyn("Input/X:0");
+                y = graph.get_tensor_by_name_dyn("Input/Y:0");
 
                 //var init = tf.global_variables_initializer();
                 //sess.run(init);
 
-                (loss_test, accuracy_test) = sess.run((loss, accuracy), (x, x_test), (y, y_test));
-                print("---------------------------------------------------------");
-                print($"Test loss: {loss_test.ToString("0.0000")}, test accuracy: {accuracy_test.ToString("P")}");
-                print("---------------------------------------------------------");
+                (float, float) stats = sess.run(new []{loss, accuracy}, feed_dict: new Dictionary<object,object> {
+                    [x] = this.x_test,
+                    [y] = this.y_test,
+                });
+                (loss_test, accuracy_test) = stats;
+                Console.WriteLine("---------------------------------------------------------");
+                Console.WriteLine($"Test loss: {loss_test.ToString("0.0000")}, test accuracy: {accuracy_test.ToString("P")}");
+                Console.WriteLine("---------------------------------------------------------");
             }
         }
 
@@ -230,20 +245,20 @@ namespace TensorFlowNET.Examples
         /// <returns>The output array</returns>
         private Tensor conv_layer(Tensor x, int filter_size, int num_filters, int stride, string name)
         {
-            return tf_with(tf.variable_scope(name), delegate {
-
-                var num_in_channel = x.shape[x.NDims - 1];
-                var shape = new[] { filter_size, filter_size, num_in_channel, num_filters };
+            using(new variable_scope(name).StartUsing())
+            {
+                var num_in_channel = x.shape[x.shape.ndim - 1];
+                var shape = new TensorShape(filter_size, filter_size, num_in_channel, num_filters);
                 var W = weight_variable("W", shape);
                 // var tf.summary.histogram("weight", W);
                 var b = bias_variable("b", new[] { num_filters });
                 // tf.summary.histogram("bias", b);
-                var layer = tf.nn.conv2d(x, W,
+                Tensor layer = tf.nn.conv2d_dyn(x, W,
                                      strides: new[] { 1, stride, stride, 1 },
                                      padding: "SAME");
                 layer += b;
                 return tf.nn.relu(layer);
-            });
+            }
         }
 
         /// <summary>
@@ -256,7 +271,7 @@ namespace TensorFlowNET.Examples
         /// <returns>The output array</returns>
         private Tensor max_pool(Tensor x, int ksize, int stride, string name)
         {
-            return tf.nn.max_pool(x,
+            return tf.nn.max_pool_dyn(x,
                 ksize: new[] { 1, ksize, ksize, 1 },
                 strides: new[] { 1, stride, stride, 1 },
                 padding: "SAME",
@@ -270,14 +285,14 @@ namespace TensorFlowNET.Examples
         /// <returns>flattened array</returns>
         private Tensor flatten_layer(Tensor layer)
         {
-            return tf_with(tf.variable_scope("Flatten_layer"), delegate
+            using (new variable_scope("Flatten_layer").StartUsing())
             {
-                var layer_shape = layer.TensorShape;
+                var layer_shape = layer.shape;
                 var num_features = layer_shape[new Slice(1, 4)].size;
-                var layer_flat = tf.reshape(layer, new[] { -1, num_features });
+                var layer_flat = tf.reshape(layer, new TensorShape(null, num_features));
 
                 return layer_flat;
-            });
+            }
         }
 
         /// <summary>
@@ -286,9 +301,9 @@ namespace TensorFlowNET.Examples
         /// <param name="name"></param>
         /// <param name="shape"></param>
         /// <returns></returns>
-        private RefVariable weight_variable(string name, int[] shape)
+        private RefVariable weight_variable(string name, TensorShape shape)
         {
-            var initer = tf.truncated_normal_initializer(stddev: 0.01f);
+            var initer = new truncated_normal_initializer(stddev: 0.01f);
             return tf.get_variable(name,
                                    dtype: tf.float32,
                                    shape: shape,
@@ -319,11 +334,11 @@ namespace TensorFlowNET.Examples
         /// <returns>The output array</returns>
         private Tensor fc_layer(Tensor x, int num_units, string name, bool use_relu = true)
         {
-            return tf_with(tf.variable_scope(name), delegate
+            using (new variable_scope(name).StartUsing())
             {
                 var in_dim = x.shape[1];
 
-                var W = weight_variable("W_" + name, shape: new[] { in_dim, num_units });
+                var W = weight_variable("W_" + name, new TensorShape(in_dim, num_units));
                 var b = bias_variable("b_" + name, new[] { num_units });
 
                 var layer = tf.matmul(x, W) + b;
@@ -331,21 +346,21 @@ namespace TensorFlowNET.Examples
                     layer = tf.nn.relu(layer);
 
                 return layer;
-            });
+            }
         } 
             
-        public override void PrepareData()
+        public void PrepareData()
         {
-            Directory.CreateDirectory(Config.Name);
+            Directory.CreateDirectory(Name);
 
             mnist = MnistModelLoader.LoadAsync(".resources/mnist", oneHot: true, showProgressInConsole: true).Result;
             (x_train, y_train) = Reformat(mnist.Train.Data, mnist.Train.Labels);
             (x_valid, y_valid) = Reformat(mnist.Validation.Data, mnist.Validation.Labels);
             (x_test, y_test) = Reformat(mnist.Test.Data, mnist.Test.Labels);
 
-            print("Size of:");
-            print($"- Training-set:\t\t{len(mnist.Train.Data)}");
-            print($"- Validation-set:\t{len(mnist.Validation.Data)}");
+            Console.WriteLine("Size of:");
+            Console.WriteLine($"- Training-set:\t\t{mnist.Train.Data.Shape.Size}");
+            Console.WriteLine($"- Validation-set:\t{mnist.Validation.Data.Shape.Size}");
         }
 
         /// <summary>
@@ -354,19 +369,40 @@ namespace TensorFlowNET.Examples
         /// <param name="x"></param>
         /// <param name="y"></param>
         /// <returns></returns>
-        private (NDArray, NDArray) Reformat(NDArray x, NDArray y)
+        private (ndarray<float>, ndarray<int>) Reformat(NDArray x, NDArray y)
         {
-            var (img_size, num_ch, num_class) = (np.sqrt(x.shape[1]).astype(np.int32), 1, len(np.unique(np.argmax(y, 1))));
-            var dataset = x.reshape(x.shape[0], img_size, img_size, num_ch).astype(np.float32);
+            var (img_size, num_ch, num_class) = ((int)Math.Sqrt(x.shape[1]), 1, NumSharp.np.unique(NumSharp.np.argmax(y, 1)).Shape.Size);
+            var dataset = (ndarray<float>)ToGradient<float>(x).reshape(new int[]{x.shape[0], img_size, img_size, num_ch}).astype(np.float32_fn);
             //y[0] = np.arange(num_class) == y[0];
             //var labels = (np.arange(num_class) == y.reshape(y.shape[0], 1, y.shape[1])).astype(np.float32);
-            return (dataset, y);
+            return (dataset, ToGradient<int>(y));
+        }
+
+        static ndarray<T> ToGradient<T>(NDArray data) where T : unmanaged => data.ToArray<T>().ToNumPyArray();
+
+        // from https://stackoverflow.com/questions/4601373/better-way-to-shuffle-two-numpy-arrays-in-unison
+        static void Shuffle<T1, T2>(ndarray<T1> array1, ndarray<T2> array2)
+        {
+            using var _ = Py.GIL();
+            var random = numPy.GetAttr("random");
+            var randomState = random.InvokeMethod("get_state");
+            random.InvokeMethod("shuffle", array1.PythonObject);
+            randomState.InvokeMethod("set_state", randomState);
+            randomState.InvokeMethod("shuffle", array2.PythonObject);
+        }
+
+        static (ndarray<T1>, ndarray<T2>) GetNextBatch<T1, T2>(
+            ndarray<T1> inputs, ndarray<T2> outputs, int start, int exclusiveEnd)
+        {
+            inputs = inputs[start .. (exclusiveEnd-1)];
+            outputs = outputs[start .. (exclusiveEnd-1)];
+            return (inputs, outputs);
         }
 
         public void SaveCheckpoint(Session sess)
         {
-            var saver = tf.train.Saver();
-            saver.save(sess, Path.Combine(Config.Name, "mnist_cnn.ckpt"));
+            var saver = new Saver();
+            saver.save(sess, Path.Combine(Name, "mnist_cnn.ckpt"));
         }
     }
 }
