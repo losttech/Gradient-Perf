@@ -54,7 +54,7 @@ iter 300: Loss=0.0419, Training Accuracy=100.00% 2517ms
 - in the Conda environment install `tensorflow==1.15.0`
 - Launch the solution, switch config to Release
 - In `Debug` section of `Bench.Gradient` project properties add `GRADIENT_PYTHON_ENVIRONMENT` = `conda:tf-1.x-cpu` environment variable
-- launch `Bench.Gradient` or `Bench.TF.NET` without debugging (e.g. Shift-F5)
+- launch `Bench.Gradient` or `Bench.TF.NET` without debugging (e.g. Ctrl-F5)
 
 ### Remarks
 
