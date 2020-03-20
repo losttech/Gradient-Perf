@@ -1,4 +1,4 @@
-﻿/*****************************************************************************
+/*****************************************************************************
    Copyright 2018 The TensorFlow.NET Authors. All Rights Reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -369,16 +369,17 @@ namespace TensorFlowNET.Examples
         /// <param name="x"></param>
         /// <param name="y"></param>
         /// <returns></returns>
-        private (ndarray<float>, ndarray<int>) Reformat(NDArray x, NDArray y)
+        private (ndarray<float>, ndarray<float>) Reformat(NDArray x, NDArray y)
         {
             var (img_size, num_ch, num_class) = ((int)Math.Sqrt(x.shape[1]), 1, NumSharp.np.unique(NumSharp.np.argmax(y, 1)).Shape.Size);
             var dataset = (ndarray<float>)ToGradient<float>(x).reshape(new int[]{x.shape[0], img_size, img_size, num_ch}).astype(np.float32_fn);
             //y[0] = np.arange(num_class) == y[0];
             //var labels = (np.arange(num_class) == y.reshape(y.shape[0], 1, y.shape[1])).astype(np.float32);
-            return (dataset, ToGradient<int>(y));
+            return (dataset, ToGradient<float>(y));
         }
 
-        static ndarray<T> ToGradient<T>(NDArray data) where T : unmanaged => data.ToArray<T>().ToNumPyArray();
+        static ndarray<T> ToGradient<T>(NDArray data) where T : unmanaged
+            => (ndarray<T>)data.ToArray<T>().ToNumPyArray().reshape(data.shape);
 
         // from https://stackoverflow.com/questions/4601373/better-way-to-shuffle-two-numpy-arrays-in-unison
         static void Shuffle<T1, T2>(ndarray<T1> array1, ndarray<T2> array2)
@@ -387,8 +388,8 @@ namespace TensorFlowNET.Examples
             var random = numPy.GetAttr("random");
             var randomState = random.InvokeMethod("get_state");
             random.InvokeMethod("shuffle", array1.PythonObject);
-            randomState.InvokeMethod("set_state", randomState);
-            randomState.InvokeMethod("shuffle", array2.PythonObject);
+            random.InvokeMethod("set_state", randomState);
+            random.InvokeMethod("shuffle", array2.PythonObject);
         }
 
         static (ndarray<T1>, ndarray<T2>) GetNextBatch<T1, T2>(
