@@ -4,10 +4,11 @@ using TensorFlowNET.Examples;
 
 namespace Bench
 {
-    class Program
+    static class GradientBenchProgram
     {
-        static void Main(string[] args)
+        static void Main()
         {
+            GradientEngine.UseEnvironmentFromVariable();
             GradientSetup.EnsureInitialized();
             var sample = new DigitRecognitionCNN();
             sample.Run();
